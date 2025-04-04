@@ -1,8 +1,6 @@
-mod bitboard;
-
 use itertools::Itertools;
 
-use std::io;
+use std::{collections::HashMap, io};
 
 fn get_line() -> String {
     let mut input_line = String::new();
@@ -12,7 +10,7 @@ fn get_line() -> String {
 
 #[derive(Clone, Copy, Debug)]
 struct State {
-    grid: [[u32; 3]; 3]
+    grid: [[u32; 3]; 3],
 }
 
 impl State {
@@ -39,20 +37,25 @@ impl State {
                     continue;
                 }
                 let mut neighbours = Vec::with_capacity(4);
-                if y > 0 && self.grid[y-1][x] != 0 && self.grid[y-1][x] != 6 {
-                    neighbours.push((x, y-1));
+                if y > 0 && self.grid[y - 1][x] != 0 && self.grid[y - 1][x] != 6 {
+                    neighbours.push((x, y - 1));
                 }
-                if x > 0 && self.grid[y][x-1] != 0 && self.grid[y][x-1] != 6 {
-                    neighbours.push((x-1, y));
+                if x > 0 && self.grid[y][x - 1] != 0 && self.grid[y][x - 1] != 6 {
+                    neighbours.push((x - 1, y));
                 }
-                if y < 2 && self.grid[y+1][x] != 0 && self.grid[y+1][x] != 6 {
-                    neighbours.push((x, y+1));
+                if y < 2 && self.grid[y + 1][x] != 0 && self.grid[y + 1][x] != 6 {
+                    neighbours.push((x, y + 1));
                 }
-                if x < 2 && self.grid[y][x+1] != 0 && self.grid[y][x+1] != 6 {
-                    neighbours.push((x+1, y));
+                if x < 2 && self.grid[y][x + 1] != 0 && self.grid[y][x + 1] != 6 {
+                    neighbours.push((x + 1, y));
                 }
                 let mut valid_neighbours = false;
-                for comb in neighbours.iter().combinations(4) {
+                for comb in neighbours
+                    .iter()
+                    .combinations(4)
+                    .chain(neighbours.iter().combinations(3))
+                    .chain(neighbours.iter().combinations(2))
+                {
                     let mut sum = 0;
                     for &&(x, y) in &comb {
                         sum += self.grid[y][x];
@@ -65,7 +68,7 @@ impl State {
                     for &(x, y) in comb {
                         new_state.grid[y][x] = 0;
                     }
-                    new_state.grid[y][x] = 1;
+                    new_state.grid[y][x] = sum;
                     possible_states.push(new_state);
                 }
                 if !valid_neighbours {
@@ -91,26 +94,35 @@ impl State {
     }
 }
 
-fn compute_sum(grid: State, depth: u32, sum: &mut u32) {
+fn compute_sum(grid: State, depth: u32, total_sum: &mut u32, solved: &mut HashMap<(u32, u32), u32>) {
+    let current_hash = grid.hash();
     if depth == 0 {
-        *sum = (*sum + grid.hash()) % (1<<30);
+        *total_sum = (*total_sum + current_hash) % (1 << 30);
         return;
     }
     let possible_states = grid.possible_states();
     if possible_states.is_empty() {
-        *sum = (*sum + grid.hash()) % (1<<30);
+        *total_sum = (*total_sum + current_hash) % (1 << 30);
         return;
     }
-    for state in possible_states {
-        compute_sum(state, depth - 1, sum);
+    if let Some(sum) = solved.get(&(current_hash, depth)) {
+        *total_sum = (*total_sum + sum) % (1 << 30);
+        return;
     }
+    let mut sum = 0;
+    for state in possible_states {
+        compute_sum(state, depth - 1, &mut sum, solved);
+    }
+    solved.insert((current_hash, depth), sum);
+    *total_sum = (*total_sum + sum) % (1 << 30);
 }
 
 fn main() {
     let depth: u32 = get_line().trim().parse().unwrap();
     let grid = State::from_input();
 
+    let mut solved = HashMap::new();
     let mut final_sum = 0;
-    compute_sum(grid, depth, &mut final_sum);
+    compute_sum(grid, depth, &mut final_sum, &mut solved);
     println!("{final_sum}");
 }
