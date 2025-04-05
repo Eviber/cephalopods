@@ -8,13 +8,13 @@ fn get_line() -> String {
     input_line
 }
 
-#[derive(Clone, Copy, Debug)]
-struct State {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct Grid {
     grid: [[u32; 3]; 3],
 }
 
-impl State {
-    fn from_input() -> State {
+impl Grid {
+    fn from_input() -> Grid {
         let mut grid = [[0; 3]; 3];
         for row in &mut grid {
             let inputs = get_line();
@@ -25,10 +25,10 @@ impl State {
             }
             eprintln!();
         }
-        State { grid }
+        Grid { grid }
     }
 
-    fn possible_states(&self) -> Vec<State> {
+    fn possible_states(&self) -> Vec<Grid> {
         let mut possible_states = Vec::new();
 
         for y in 0..3 {
@@ -92,37 +92,102 @@ impl State {
         }
         hash
     }
+
+    fn dice_count(&self) -> usize {
+        self.grid.iter().flatten().filter(|&&d| d != 0).count()
+    }
 }
 
-fn compute_sum(grid: State, depth: u32, total_sum: &mut u32, solved: &mut HashMap<(u32, u32), u32>) {
-    let current_hash = grid.hash();
-    if depth == 0 {
-        *total_sum = (*total_sum + current_hash) % (1 << 30);
-        return;
+// Array containing every current and future states.
+// first is the total sum of every dies (len 2, for current and next)
+// second dimension is the number of dies (len 9, considering the 0 case doesn't exist)
+//
+// it is only possible to move from one state to another by:
+// adding a dice and incrementing the sum
+// or by removing 1 to 3 dies and keeping the sum (capture, so minus 2 to 4 plus 1)
+//
+// every cell contains a HashMap with grid state as key and an array Paths as value
+// Paths contains how many ways there are to attain this grid state, by depth
+// ex: [4, 3, 0, 1, ..] would mean 4 ways to attain this state at depth 0, 3 at depth 1, etc.
+//
+// First initialize the array with empty maps everywhere
+// Then insert the starting state
+//
+// In a loop:
+//
+//   Iterate over the array, from the least sum & most dies to the least sum & least dies
+//   for every encountered state, generate every children states and add the current Paths to the
+//   children, after decrementing the remaining depth
+//
+//   Everytime a depth of zero is reached, add the hash of the grid times the number of
+//   ways it was reached to the total hash.
+//   If a grid reaches 9 dies, add its hash times the sum of all its Paths to the total hash.
+//
+//   Then, clear the current array and swap next and current arrays
+//
+//   if every HashMap was empty this iteration, break out of the loop
+//
+// end of loop
+
+const MAX_DEPTH: usize = 40;
+type PathCountsByDepth = [u32; MAX_DEPTH + 1];
+type GridStateMap = HashMap<Grid, PathCountsByDepth>;
+type StateBuffer = [GridStateMap; 9];
+
+fn new_state_buffer() -> StateBuffer {
+    [
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+    ]
+}
+
+fn compute_sum(grid: Grid, depth: usize) -> u32 {
+    let final_sum = 0;
+    // let possible_states = grid.possible_states();
+    let mut current = new_state_buffer();
+    let mut next = new_state_buffer();
+    let mut paths = [0; MAX_DEPTH + 1];
+    paths[depth] = 1;
+
+    current[grid.dice_count() - 1].insert(grid, paths);
+    loop {
+        let mut was_empty = true;
+        for (empty_spaces_count, grid_states) in current.into_iter().enumerate() {
+            if grid_states.is_empty() {
+                continue;
+            }
+            was_empty = false;
+            for (grid, path) in grid_states {
+                let current_dice_count = grid.dice_count();
+                for grid in grid.possible_states() {
+                    let next_dice_count = grid.dice_count();
+                    if next_dice_count > current_dice_count {
+                        next[next_dice_count].get()
+                    } else {
+                    }
+                }
+            }
+        }
+        if was_empty {
+            break;
+        }
+        current = next;
+        next = new_state_buffer();
     }
-    let possible_states = grid.possible_states();
-    if possible_states.is_empty() {
-        *total_sum = (*total_sum + current_hash) % (1 << 30);
-        return;
-    }
-    if let Some(sum) = solved.get(&(current_hash, depth)) {
-        *total_sum = (*total_sum + sum) % (1 << 30);
-        return;
-    }
-    let mut sum = 0;
-    for state in possible_states {
-        compute_sum(state, depth - 1, &mut sum, solved);
-    }
-    solved.insert((current_hash, depth), sum);
-    *total_sum = (*total_sum + sum) % (1 << 30);
+    final_sum
 }
 
 fn main() {
-    let depth: u32 = get_line().trim().parse().unwrap();
-    let grid = State::from_input();
+    let depth: usize = get_line().trim().parse().unwrap();
+    let grid = Grid::from_input();
 
-    let mut solved = HashMap::new();
-    let mut final_sum = 0;
-    compute_sum(grid, depth, &mut final_sum, &mut solved);
+    let final_sum = compute_sum(grid, depth);
     println!("{final_sum}");
 }
