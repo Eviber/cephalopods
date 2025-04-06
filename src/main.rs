@@ -149,28 +149,51 @@ fn new_state_buffer() -> StateBuffer {
 }
 
 fn compute_sum(grid: Grid, depth: usize) -> u32 {
-    let final_sum = 0;
-    // let possible_states = grid.possible_states();
+    let mut final_sum = 0;
     let mut current = new_state_buffer();
     let mut next = new_state_buffer();
-    let mut paths = [0; MAX_DEPTH + 1];
-    paths[depth] = 1;
 
-    current[grid.dice_count() - 1].insert(grid, paths);
+    if grid.hash() == 0 {
+        let possible_states = grid.possible_states();
+        let mut paths = [0; MAX_DEPTH + 1];
+        paths[depth - 1] = 1;
+        for grid in possible_states {
+            let next_dice_count = 1;
+            current[9 - next_dice_count].insert(grid, paths);
+        }
+    } else {
+        let mut paths = [0; MAX_DEPTH + 1];
+        paths[depth] = 1;
+        current[9 - grid.dice_count()].insert(grid, paths);
+    }
     loop {
         let mut was_empty = true;
-        for (empty_spaces_count, grid_states) in current.into_iter().enumerate() {
+        for i in 0..9 {
+            let grid_states = std::mem::take(&mut current[i]);
             if grid_states.is_empty() {
                 continue;
             }
             was_empty = false;
             for (grid, path) in grid_states {
+                let possible_states = grid.possible_states();
+                if possible_states.is_empty() {
+                    final_sum += path.into_iter().sum::<u32>() * grid.hash();
+                    continue;
+                }
+                final_sum += path[0] * grid.hash();
                 let current_dice_count = grid.dice_count();
-                for grid in grid.possible_states() {
+                assert_eq!(current_dice_count, 9 - i);
+                for grid in possible_states {
                     let next_dice_count = grid.dice_count();
-                    if next_dice_count > current_dice_count {
-                        next[next_dice_count].get()
+                    let p = if next_dice_count > current_dice_count {
+                        next[9 - next_dice_count].entry(grid).or_insert_with(|| [0; MAX_DEPTH + 1])
                     } else {
+                        assert!(next_dice_count < current_dice_count);
+                        assert!(next_dice_count < 9 - i);
+                        current[9 - next_dice_count].entry(grid).or_insert_with(|| [0; MAX_DEPTH + 1])
+                    };
+                    for (i, n) in p.iter_mut().enumerate().take(MAX_DEPTH) {
+                        *n += path[i + 1];
                     }
                 }
             }
@@ -178,10 +201,10 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
         if was_empty {
             break;
         }
-        current = next;
-        next = new_state_buffer();
+        std::mem::swap(&mut current, &mut next);
+        // next.iter_mut().for_each(|gs| gs.clear());
     }
-    final_sum
+    final_sum % (1 << 30)
 }
 
 fn main() {
