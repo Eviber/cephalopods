@@ -132,26 +132,25 @@ impl Grid {
 const MAX_DEPTH: usize = 40;
 type PathCountsByDepth = [u32; MAX_DEPTH + 1];
 type GridStateMap = HashMap<Grid, PathCountsByDepth>;
-type StateBuffer = [GridStateMap; 9];
+type StateBuffer = [Option<GridStateMap>; 9];
 
 fn new_state_buffer() -> StateBuffer {
     [
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
+        Some(HashMap::new()),
+        Some(HashMap::new()),
+        Some(HashMap::new()),
+        Some(HashMap::new()),
+        Some(HashMap::new()),
+        Some(HashMap::new()),
+        Some(HashMap::new()),
+        Some(HashMap::new()),
+        Some(HashMap::new()),
     ]
 }
 
 fn compute_sum(grid: Grid, depth: usize) -> u32 {
     let mut final_sum = 0;
-    let mut current = new_state_buffer();
-    let mut next = new_state_buffer();
+    let mut state_buffer = new_state_buffer();
 
     if grid.hash() == 0 {
         let possible_states = grid.possible_states();
@@ -159,51 +158,66 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
         paths[depth - 1] = 1;
         for grid in possible_states {
             let next_dice_count = 1;
-            current[9 - next_dice_count].insert(grid, paths);
+            state_buffer[9 - next_dice_count]
+                .as_mut()
+                .unwrap()
+                .insert(grid, paths);
         }
     } else {
         let mut paths = [0; MAX_DEPTH + 1];
         paths[depth] = 1;
-        current[9 - grid.dice_count()].insert(grid, paths);
+        state_buffer[9 - grid.dice_count()]
+            .as_mut()
+            .unwrap()
+            .insert(grid, paths);
     }
     loop {
         let mut was_empty = true;
         for i in 0..9 {
-            let grid_states = std::mem::take(&mut current[i]);
-            if grid_states.is_empty() {
+            if state_buffer[i].as_ref().unwrap().is_empty() {
                 continue;
             }
+            let mut grid_states = state_buffer[i].take().unwrap();
             was_empty = false;
-            for (grid, path) in grid_states {
+            for (grid, path) in &grid_states {
                 let possible_states = grid.possible_states();
                 if possible_states.is_empty() {
-                    final_sum += path.into_iter().sum::<u32>() * grid.hash();
+                    final_sum += path.iter().sum::<u32>() * grid.hash();
                     continue;
                 }
                 final_sum += path[0] * grid.hash();
+                if path.iter().skip(1).all(|&n| n == 0) {
+                    continue;
+                }
                 let current_dice_count = grid.dice_count();
                 assert_eq!(current_dice_count, 9 - i);
                 for grid in possible_states {
                     let next_dice_count = grid.dice_count();
-                    let p = if next_dice_count > current_dice_count {
-                        next[9 - next_dice_count].entry(grid).or_insert_with(|| [0; MAX_DEPTH + 1])
-                    } else {
-                        assert!(next_dice_count < current_dice_count);
-                        assert!(next_dice_count < 9 - i);
-                        current[9 - next_dice_count].entry(grid).or_insert_with(|| [0; MAX_DEPTH + 1])
+                    let p = {
+                        assert_ne!(next_dice_count, 9 - i);
+                        state_buffer[9 - next_dice_count]
+                            .as_mut()
+                            .unwrap()
+                            .entry(grid)
+                            .or_insert_with(|| [0; MAX_DEPTH + 1])
                     };
                     for (i, n) in p.iter_mut().enumerate().take(MAX_DEPTH) {
                         *n += path[i + 1];
                     }
                 }
             }
+            grid_states.clear();
+            state_buffer[i] = Some(grid_states);
         }
         if was_empty {
             break;
         }
-        std::mem::swap(&mut current, &mut next);
-        // next.iter_mut().for_each(|gs| gs.clear());
     }
+    for m in state_buffer {
+        let m = m.unwrap();
+        eprintln!("{} - {}", m.len(), m.capacity());
+    }
+    eprintln!();
     final_sum % (1 << 30)
 }
 
