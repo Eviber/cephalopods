@@ -8,24 +8,59 @@ fn get_line() -> String {
     input_line
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+type Card = u32;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 struct Grid {
-    grid: [[u32; 3]; 3],
+    cards: [Card; 6],
 }
 
 impl Grid {
+
+    #[inline]
+    fn get(&self, x: usize, y: usize) -> u32 {
+        let mask = 1 << (y * 3 + x);
+        for (i, card) in self.cards.iter().enumerate() {
+            if card & mask != 0 {
+                return 1 + i as u32;
+            }
+        }
+        0
+    }
+
+    #[inline]
+    fn set(&mut self, x: usize, y: usize, n: u32) {
+        let b = 1 << (y * 3 + x);
+        for i in 0..6 {
+            self.cards[i] &= !b;
+        }
+        if n != 0 {
+            self.cards[n as usize - 1] |= b;
+        }
+    }
+
     fn from_input() -> Grid {
-        let mut grid = [[0; 3]; 3];
-        for row in &mut grid {
+        let mut grid = Grid::default();
+        for y in 0..3 {
             let inputs = get_line();
             for (x, s) in inputs.split_whitespace().enumerate() {
                 let value: u32 = s.parse().unwrap();
-                row[x] = value;
+                grid.set(x, y, value);
                 eprint!("{value}");
             }
             eprintln!();
         }
-        Grid { grid }
+        grid
+    }
+
+    #[inline]
+    fn empty_mask(&self) -> Card {
+        !self.occupied() & 0x1FF
+    }
+
+    #[inline]
+    fn occupied(&self) -> Card {
+        self.cards.iter().fold(0, |res, cur| res | cur)
     }
 
     fn possible_states(&self) -> Vec<Grid> {
@@ -33,20 +68,20 @@ impl Grid {
 
         for y in 0..3 {
             for x in 0..3 {
-                if self.grid[y][x] != 0 {
+                if self.get(x, y) != 0 {
                     continue;
                 }
                 let mut neighbours = Vec::with_capacity(4);
-                if y > 0 && self.grid[y - 1][x] != 0 && self.grid[y - 1][x] != 6 {
+                if y > 0 && self.get(x, y - 1) != 0 && self.get(x, y - 1) != 6 {
                     neighbours.push((x, y - 1));
                 }
-                if x > 0 && self.grid[y][x - 1] != 0 && self.grid[y][x - 1] != 6 {
+                if x > 0 && self.get(x - 1, y) != 0 && self.get(x - 1, y) != 6 {
                     neighbours.push((x - 1, y));
                 }
-                if y < 2 && self.grid[y + 1][x] != 0 && self.grid[y + 1][x] != 6 {
+                if y < 2 && self.get(x, y + 1) != 0 && self.get(x, y + 1) != 6 {
                     neighbours.push((x, y + 1));
                 }
-                if x < 2 && self.grid[y][x + 1] != 0 && self.grid[y][x + 1] != 6 {
+                if x < 2 && self.get(x + 1, y) != 0 && self.get(x + 1, y) != 6 {
                     neighbours.push((x + 1, y));
                 }
                 let mut valid_neighbours = false;
@@ -58,7 +93,7 @@ impl Grid {
                 {
                     let mut sum = 0;
                     for &&(x, y) in &comb {
-                        sum += self.grid[y][x];
+                        sum += self.get(x, y);
                     }
                     if sum > 6 {
                         continue;
@@ -66,14 +101,14 @@ impl Grid {
                     valid_neighbours = true;
                     let mut new_state = *self;
                     for &(x, y) in comb {
-                        new_state.grid[y][x] = 0;
+                        new_state.set(x, y, 0);
                     }
-                    new_state.grid[y][x] = sum;
+                    new_state.set(x, y, sum);
                     possible_states.push(new_state);
                 }
                 if !valid_neighbours {
                     let mut new_state = *self;
-                    new_state.grid[y][x] = 1;
+                    new_state.set(x, y, 1);
                     possible_states.push(new_state);
                 }
             }
@@ -84,17 +119,14 @@ impl Grid {
     fn hash(&self) -> u32 {
         let mut hash = 0;
 
-        for row in &self.grid {
-            for value in row {
-                hash *= 10;
-                hash += value;
-            }
+        for n in 0..9 {
+            hash = hash * 10 + self.get(n % 3, n / 3);
         }
         hash
     }
 
     fn dice_count(&self) -> usize {
-        self.grid.iter().flatten().filter(|&&d| d != 0).count()
+        self.occupied().count_ones() as usize
     }
 }
 
