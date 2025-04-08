@@ -8,35 +8,24 @@ fn get_line() -> String {
     input_line
 }
 
-type Card = u32;
+type Bitset = u32;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 struct Grid {
-    cards: [Card; 6],
+    bitset: Bitset,
 }
 
 impl Grid {
 
     #[inline]
     fn get(&self, x: usize, y: usize) -> u32 {
-        let mask = 1 << (y * 3 + x);
-        for (i, card) in self.cards.iter().enumerate() {
-            if card & mask != 0 {
-                return 1 + i as u32;
-            }
-        }
-        0
+        (self.bitset >> ((y * 3 + x) * 3)) & 7
     }
 
     #[inline]
     fn set(&mut self, x: usize, y: usize, n: u32) {
-        let b = 1 << (y * 3 + x);
-        for i in 0..6 {
-            self.cards[i] &= !b;
-        }
-        if n != 0 {
-            self.cards[n as usize - 1] |= b;
-        }
+        self.bitset &= !(7 << ((y * 3 + x) * 3));
+        self.bitset |= n << ((y * 3 + x) * 3);
     }
 
     fn from_input() -> Grid {
@@ -54,13 +43,22 @@ impl Grid {
     }
 
     #[inline]
-    fn empty_mask(&self) -> Card {
+    fn empty_mask(&self) -> Bitset {
         !self.occupied() & 0x1FF
     }
 
     #[inline]
-    fn occupied(&self) -> Card {
-        self.cards.iter().fold(0, |res, cur| res | cur)
+    fn occupied(&self) -> Bitset {
+        let mut set = 0;
+        for y in 0..3 {
+            for x in 0..3 {
+                set <<= 1;
+                if self.get(x, y) != 0 {
+                    set |= 1;
+                }
+            }
+        }
+        set
     }
 
     fn possible_states(&self) -> Vec<Grid> {
@@ -223,14 +221,18 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
                 }
                 let current_dice_count = grid.dice_count();
                 assert_eq!(current_dice_count, 9 - i);
-                for grid in possible_states {
-                    let next_dice_count = grid.dice_count();
+                for g in possible_states {
+                    let next_dice_count = g.dice_count();
                     let p = {
-                        assert_ne!(next_dice_count, 9 - i);
+                        if next_dice_count == 9 - i {
+                            eprintln!("{:09}", grid.hash());
+                            eprintln!("{:09}", g.hash());
+                            panic!()
+                        }
                         state_buffer[9 - next_dice_count]
                             .as_mut()
                             .unwrap()
-                            .entry(grid)
+                            .entry(g)
                             .or_insert_with(|| [0; MAX_DEPTH + 1])
                     };
                     for (i, n) in p.iter_mut().enumerate().take(MAX_DEPTH) {
