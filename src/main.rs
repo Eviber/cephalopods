@@ -16,7 +16,6 @@ struct Grid {
 }
 
 impl Grid {
-
     #[inline]
     fn get(&self, x: usize, y: usize) -> u32 {
         (self.bitset >> ((y * 3 + x) * 3)) & 7
@@ -128,125 +127,29 @@ impl Grid {
     }
 }
 
-// Array containing every current and future states.
-// first is the total sum of every dies (len 2, for current and next)
-// second dimension is the number of dies (len 9, considering the 0 case doesn't exist)
-//
-// it is only possible to move from one state to another by:
-// adding a dice and incrementing the sum
-// or by removing 1 to 3 dies and keeping the sum (capture, so minus 2 to 4 plus 1)
-//
-// every cell contains a HashMap with grid state as key and an array Paths as value
-// Paths contains how many ways there are to attain this grid state, by depth
-// ex: [4, 3, 0, 1, ..] would mean 4 ways to attain this state at depth 0, 3 at depth 1, etc.
-//
-// First initialize the array with empty maps everywhere
-// Then insert the starting state
-//
-// In a loop:
-//
-//   Iterate over the array, from the least sum & most dies to the least sum & least dies
-//   for every encountered state, generate every children states and add the current Paths to the
-//   children, after decrementing the remaining depth
-//
-//   Everytime a depth of zero is reached, add the hash of the grid times the number of
-//   ways it was reached to the total hash.
-//   If a grid reaches 9 dies, add its hash times the sum of all its Paths to the total hash.
-//
-//   Then, clear the current array and swap next and current arrays
-//
-//   if every HashMap was empty this iteration, break out of the loop
-//
-// end of loop
-
-const MAX_DEPTH: usize = 40;
-type PathCountsByDepth = [u32; MAX_DEPTH + 1];
-type GridStateMap = HashMap<Grid, PathCountsByDepth>;
-type StateBuffer = [Option<GridStateMap>; 9];
-
-fn new_state_buffer() -> StateBuffer {
-    [
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-    ]
-}
-
 fn compute_sum(grid: Grid, depth: usize) -> u32 {
     let mut final_sum = 0;
-    let mut state_buffer = new_state_buffer();
+    let mut current = HashMap::new();
+    let mut next = HashMap::new();
 
-    if grid.hash() == 0 {
-        let possible_states = grid.possible_states();
-        let mut paths = [0; MAX_DEPTH + 1];
-        paths[depth - 1] = 1;
-        for grid in possible_states {
-            let next_dice_count = 1;
-            state_buffer[9 - next_dice_count]
-                .as_mut()
-                .unwrap()
-                .insert(grid, paths);
-        }
-    } else {
-        let mut paths = [0; MAX_DEPTH + 1];
-        paths[depth] = 1;
-        state_buffer[9 - grid.dice_count()]
-            .as_mut()
-            .unwrap()
-            .insert(grid, paths);
-    }
-    loop {
-        let mut was_empty = true;
-        for i in 0..9 {
-            if state_buffer[i].as_ref().unwrap().is_empty() {
-                continue;
-            }
-            let mut grid_states = state_buffer[i].take().unwrap();
-            was_empty = false;
-            for (grid, path) in &grid_states {
-                if i == 0 {
-                    final_sum += path.iter().sum::<u32>() * grid.hash();
+    current.insert(grid, 1);
+    for _ in 0..depth {
+        for (grid, occurrences) in &current {
+            for grid in grid.possible_states() {
+                if grid.dice_count() == 9 {
+                    final_sum += occurrences * grid.hash();
                     continue;
                 }
-                final_sum += path[0] * grid.hash();
-                if path.iter().skip(1).all(|&n| n == 0) {
-                    continue;
-                }
-                for g in grid.possible_states() {
-                    let next_dice_count = g.dice_count();
-                    let p = {
-                        if next_dice_count == 9 - i {
-                            eprintln!("{:09}", grid.hash());
-                            eprintln!("{:09}", g.hash());
-                            panic!()
-                        }
-                        state_buffer[9 - next_dice_count]
-                            .as_mut()
-                            .unwrap()
-                            .entry(g)
-                            .or_insert_with(|| [0; MAX_DEPTH + 1])
-                    };
-                    for (i, n) in p.iter_mut().enumerate().take(MAX_DEPTH) {
-                        *n += path[i + 1];
-                    }
-                }
+                next.entry(grid)
+                    .and_modify(|n| *n += occurrences)
+                    .or_insert(*occurrences);
             }
-            grid_states.clear();
-            state_buffer[i] = Some(grid_states);
         }
-        if was_empty {
-            break;
-        }
+        current.clear();
+        std::mem::swap(&mut current, &mut next);
     }
-    for m in state_buffer {
-        let m = m.unwrap();
-        eprintln!("{} - {}", m.len(), m.capacity());
+    for (grid, occurrences) in current {
+        final_sum += occurrences * grid.hash();
     }
     eprintln!();
     final_sum % (1 << 30)
