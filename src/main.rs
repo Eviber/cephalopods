@@ -210,8 +210,7 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
             let mut grid_states = state_buffer[i].take().unwrap();
             was_empty = false;
             for (grid, path) in &grid_states {
-                let possible_states = grid.possible_states();
-                if possible_states.is_empty() {
+                if i == 0 {
                     final_sum += path.iter().sum::<u32>() * grid.hash();
                     continue;
                 }
@@ -219,9 +218,7 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
                 if path.iter().skip(1).all(|&n| n == 0) {
                     continue;
                 }
-                let current_dice_count = grid.dice_count();
-                assert_eq!(current_dice_count, 9 - i);
-                for g in possible_states {
+                for g in grid.possible_states() {
                     let next_dice_count = g.dice_count();
                     let p = {
                         if next_dice_count == 9 - i {
