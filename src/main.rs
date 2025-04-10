@@ -34,13 +34,21 @@ impl Grid {
             for (x, s) in inputs.split_whitespace().enumerate() {
                 let value: u32 = s.parse().unwrap();
                 grid.set(x, y, value);
-                eprint!("{value}");
             }
-            eprintln!();
         }
         grid
     }
 
+    fn print(&self) {
+        for y in 0..3 {
+            for x in 0..3 {
+                eprint!("{}", self.get(x, y));
+            }
+            eprintln!();
+        }
+    }
+
+    #[allow(dead_code)]
     #[inline]
     fn empty_mask(&self) -> Bitset {
         !self.occupied() & 0x1FF
@@ -113,6 +121,7 @@ impl Grid {
         possible_states
     }
 
+    #[inline]
     fn hash(&self) -> u32 {
         let mut hash = 0;
 
@@ -122,8 +131,27 @@ impl Grid {
         hash
     }
 
+    #[inline]
     fn dice_count(&self) -> usize {
         self.occupied().count_ones() as usize
+    }
+
+    #[inline]
+    fn h_flip(&self) -> Self {
+        Grid {
+            bitset: ((self.bitset >> (3 * 6)) & 0o777)
+                | ((self.bitset & 0o777) << (3 * 6))
+                | (self.bitset & (0o777 << (3 * 3))),
+        }
+    }
+
+    #[inline]
+    fn canonical(&self) -> (usize, Self) {
+        let mirror = self.h_flip();
+        if mirror.bitset < self.bitset {
+            return (1, mirror);
+        }
+        (0, *self)
     }
 }
 
@@ -159,14 +187,15 @@ impl Grid {
 // end of loop
 
 const MAX_DEPTH: usize = 40;
-type PathCountsByDepth = [u32; MAX_DEPTH + 1];
-type GridStateMap = HashMap<Grid, PathCountsByDepth>;
+const TRANSFORM_COUNT: usize = 2;
+type Paths = [[u32; MAX_DEPTH + 1]; TRANSFORM_COUNT];
+type GridStateMap = HashMap<Grid, Paths>;
 
 struct StateBuffer([Option<GridStateMap>; 9]);
 
 impl StateBuffer {
-    fn new() -> Self {
-        StateBuffer([
+    fn new(grid: Grid, depth: usize) -> Self {
+        let mut state_buffer = StateBuffer([
             Some(HashMap::new()),
             Some(HashMap::new()),
             Some(HashMap::new()),
@@ -176,11 +205,20 @@ impl StateBuffer {
             Some(HashMap::new()),
             Some(HashMap::new()),
             Some(HashMap::new()),
-        ])
+        ]);
+        let mut paths = [[0; MAX_DEPTH + 1]; TRANSFORM_COUNT];
+        paths[0][depth] = 1; // Not sure about that 0...
+        let idx = if grid.hash() == 0 {
+            7 // we can put an initial empty grid anywhere except at index 0 or 8
+        } else {
+            9 - grid.dice_count()
+        };
+        state_buffer.insert(idx, grid, paths);
+        state_buffer
     }
 
     #[inline]
-    fn insert(&mut self, idx: usize, grid: Grid, paths: PathCountsByDepth) {
+    fn insert(&mut self, idx: usize, grid: Grid, paths: Paths) {
         self.0[idx].as_mut().unwrap().insert(grid, paths);
     }
 
@@ -195,12 +233,12 @@ impl StateBuffer {
     }
 
     #[inline]
-    fn entry(&mut self, idx: usize, grid: Grid) -> &mut PathCountsByDepth {
+    fn entry(&mut self, idx: usize, grid: Grid) -> &mut Paths {
         self.0[idx]
             .as_mut()
             .unwrap()
             .entry(grid)
-            .or_insert_with(|| [0; MAX_DEPTH + 1])
+            .or_insert_with(|| [[0; MAX_DEPTH + 1]; TRANSFORM_COUNT])
     }
 
     #[inline]
@@ -210,27 +248,21 @@ impl StateBuffer {
     }
 
     #[inline]
-    fn add_grid(&mut self, grid: Grid, parent_path: &PathCountsByDepth) {
+    fn add_grid(&mut self, grid: Grid, parent_path: &Paths) {
         let next_dice_count = grid.dice_count();
-        let p = self.entry(9 - next_dice_count, grid);
-        for (i, n) in p.iter_mut().enumerate().take(MAX_DEPTH) {
-            *n += parent_path[i + 1];
+        let (transform_idx, canon_transform) = grid.canonical();
+        let p = self.entry(9 - next_dice_count, canon_transform);
+        for i in 0..MAX_DEPTH {
+            p[0][i] += parent_path[(transform_idx != 0) as usize][i + 1];
+            p[1][i] += parent_path[(transform_idx == 0) as usize][i + 1];
         }
     }
 }
 
 fn compute_sum(grid: Grid, depth: usize) -> u32 {
     let mut final_sum = 0;
-    let mut state_buffer = StateBuffer::new();
+    let mut state_buffer = StateBuffer::new(grid, depth);
 
-    let mut paths = [0; MAX_DEPTH + 1];
-    paths[depth] = 1;
-    let idx = if grid.hash() == 0 {
-        7 // we can put an initial empty grid anywhere except at index 0 or 8
-    } else {
-        9 - grid.dice_count()
-    };
-    state_buffer.insert(idx, grid, paths);
     loop {
         let mut was_empty = true;
         for i in 0..9 {
@@ -241,11 +273,17 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
             was_empty = false;
             for (grid, path) in &grid_states {
                 if i == 0 {
-                    final_sum += path.iter().sum::<u32>() * grid.hash();
+                    final_sum += path[0].iter().sum::<u32>() * grid.hash();
+                    final_sum += path[1].iter().sum::<u32>() * grid.h_flip().hash();
                     continue;
                 }
-                final_sum += path[0] * grid.hash();
-                if path.iter().skip(1).all(|&n| n == 0) {
+                final_sum += path[0][0] * grid.hash();
+                final_sum += path[1][0] * grid.h_flip().hash();
+                if path
+                    .iter()
+                    .flat_map(|depths| depths.iter().skip(1))
+                    .all(|&n| n == 0)
+                {
                     continue;
                 }
                 for g in grid.possible_states() {
@@ -269,6 +307,7 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
 fn main() {
     let depth: usize = get_line().trim().parse().unwrap();
     let grid = Grid::from_input();
+    grid.print();
 
     let final_sum = compute_sum(grid, depth);
     println!("{final_sum}");
