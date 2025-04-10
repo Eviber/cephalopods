@@ -204,8 +204,18 @@ impl StateBuffer {
     }
 
     #[inline]
-    fn put(&mut self, idx: usize, grid_states: GridStateMap) {
+    fn put_back(&mut self, idx: usize, mut grid_states: GridStateMap) {
+        grid_states.clear();
         self.0[idx] = Some(grid_states);
+    }
+
+    #[inline]
+    fn add_grid(&mut self, grid: Grid, parent_path: &PathCountsByDepth) {
+        let next_dice_count = grid.dice_count();
+        let p = self.entry(9 - next_dice_count, grid);
+        for (i, n) in p.iter_mut().enumerate().take(MAX_DEPTH) {
+            *n += parent_path[i + 1];
+        }
     }
 }
 
@@ -227,7 +237,7 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
             if state_buffer.is_empty(i) {
                 continue;
             }
-            let mut grid_states = state_buffer.take(i);
+            let grid_states = state_buffer.take(i);
             was_empty = false;
             for (grid, path) in &grid_states {
                 if i == 0 {
@@ -239,22 +249,10 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
                     continue;
                 }
                 for g in grid.possible_states() {
-                    let next_dice_count = g.dice_count();
-                    let p = {
-                        if next_dice_count == 9 - i {
-                            eprintln!("{:09}", grid.hash());
-                            eprintln!("{:09}", g.hash());
-                            panic!()
-                        }
-                        state_buffer.entry(9 - next_dice_count, g)
-                    };
-                    for (i, n) in p.iter_mut().enumerate().take(MAX_DEPTH) {
-                        *n += path[i + 1];
-                    }
+                    state_buffer.add_grid(g, path);
                 }
             }
-            grid_states.clear();
-            state_buffer.put(i, grid_states);
+            state_buffer.put_back(i, grid_states);
         }
         if was_empty {
             break;
