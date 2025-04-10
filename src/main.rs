@@ -16,7 +16,6 @@ struct Grid {
 }
 
 impl Grid {
-
     #[inline]
     fn get(&self, x: usize, y: usize) -> u32 {
         (self.bitset >> ((y * 3 + x) * 3)) & 7
@@ -162,52 +161,73 @@ impl Grid {
 const MAX_DEPTH: usize = 40;
 type PathCountsByDepth = [u32; MAX_DEPTH + 1];
 type GridStateMap = HashMap<Grid, PathCountsByDepth>;
-type StateBuffer = [Option<GridStateMap>; 9];
 
-fn new_state_buffer() -> StateBuffer {
-    [
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-        Some(HashMap::new()),
-    ]
+struct StateBuffer([Option<GridStateMap>; 9]);
+
+impl StateBuffer {
+    fn new() -> Self {
+        StateBuffer([
+            Some(HashMap::new()),
+            Some(HashMap::new()),
+            Some(HashMap::new()),
+            Some(HashMap::new()),
+            Some(HashMap::new()),
+            Some(HashMap::new()),
+            Some(HashMap::new()),
+            Some(HashMap::new()),
+            Some(HashMap::new()),
+        ])
+    }
+
+    #[inline]
+    fn insert(&mut self, idx: usize, grid: Grid, paths: PathCountsByDepth) {
+        self.0[idx].as_mut().unwrap().insert(grid, paths);
+    }
+
+    #[inline]
+    fn is_empty(&self, idx: usize) -> bool {
+        self.0[idx].as_ref().unwrap().is_empty()
+    }
+
+    #[inline]
+    fn take(&mut self, idx: usize) -> GridStateMap {
+        self.0[idx].take().unwrap()
+    }
+
+    #[inline]
+    fn entry(&mut self, idx: usize, grid: Grid) -> &mut PathCountsByDepth {
+        self.0[idx]
+            .as_mut()
+            .unwrap()
+            .entry(grid)
+            .or_insert_with(|| [0; MAX_DEPTH + 1])
+    }
+
+    #[inline]
+    fn put(&mut self, idx: usize, grid_states: GridStateMap) {
+        self.0[idx] = Some(grid_states);
+    }
 }
 
 fn compute_sum(grid: Grid, depth: usize) -> u32 {
     let mut final_sum = 0;
-    let mut state_buffer = new_state_buffer();
+    let mut state_buffer = StateBuffer::new();
 
-    if grid.hash() == 0 {
-        let possible_states = grid.possible_states();
-        let mut paths = [0; MAX_DEPTH + 1];
-        paths[depth - 1] = 1;
-        for grid in possible_states {
-            let next_dice_count = 1;
-            state_buffer[9 - next_dice_count]
-                .as_mut()
-                .unwrap()
-                .insert(grid, paths);
-        }
+    let mut paths = [0; MAX_DEPTH + 1];
+    paths[depth] = 1;
+    let idx = if grid.hash() == 0 {
+        7 // we can put an initial empty grid anywhere except at index 0 or 8
     } else {
-        let mut paths = [0; MAX_DEPTH + 1];
-        paths[depth] = 1;
-        state_buffer[9 - grid.dice_count()]
-            .as_mut()
-            .unwrap()
-            .insert(grid, paths);
-    }
+        9 - grid.dice_count()
+    };
+    state_buffer.insert(idx, grid, paths);
     loop {
         let mut was_empty = true;
         for i in 0..9 {
-            if state_buffer[i].as_ref().unwrap().is_empty() {
+            if state_buffer.is_empty(i) {
                 continue;
             }
-            let mut grid_states = state_buffer[i].take().unwrap();
+            let mut grid_states = state_buffer.take(i);
             was_empty = false;
             for (grid, path) in &grid_states {
                 if i == 0 {
@@ -226,11 +246,7 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
                             eprintln!("{:09}", g.hash());
                             panic!()
                         }
-                        state_buffer[9 - next_dice_count]
-                            .as_mut()
-                            .unwrap()
-                            .entry(g)
-                            .or_insert_with(|| [0; MAX_DEPTH + 1])
+                        state_buffer.entry(9 - next_dice_count, g)
                     };
                     for (i, n) in p.iter_mut().enumerate().take(MAX_DEPTH) {
                         *n += path[i + 1];
@@ -238,13 +254,13 @@ fn compute_sum(grid: Grid, depth: usize) -> u32 {
                 }
             }
             grid_states.clear();
-            state_buffer[i] = Some(grid_states);
+            state_buffer.put(i, grid_states);
         }
         if was_empty {
             break;
         }
     }
-    for m in state_buffer {
+    for m in state_buffer.0 {
         let m = m.unwrap();
         eprintln!("{} - {}", m.len(), m.capacity());
     }
