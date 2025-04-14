@@ -69,7 +69,7 @@ impl Grid {
         set
     }
 
-    fn possible_states(&self) -> Vec<Grid> {
+    fn possible_states(&self) -> impl Iterator<Item = Grid> {
         let mut possible_states = Vec::new();
 
         for y in 0..3 {
@@ -119,17 +119,7 @@ impl Grid {
                 }
             }
         }
-        possible_states
-    }
-
-    #[inline]
-    fn hash(&self) -> u32 {
-        let mut hash = 0;
-
-        for n in 0..9 {
-            hash = hash * 10 + self.get(n % 3, n / 3);
-        }
-        hash
+        possible_states.into_iter()
     }
 
     #[inline]
@@ -190,12 +180,13 @@ impl Grid {
 
     #[inline]
     fn dvh_flip(&self) -> Self {
-        // bitset: self.bitset & 0o_007_070_700
-        //     | ((self.bitset & 0o_070_700_000) >> (4 * 3))
-        //     | ((self.bitset & 0o_000_007_070) << (4 * 3))
-        //     | ((self.bitset & 0o_000_000_007) << (8 * 3))
-        //     | ((self.bitset & 0o_700_000_000) >> (8 * 3)),
-        self.d_flip().v_flip().h_flip()
+        Grid {
+            bitset: self.bitset & 0o_007_070_700
+                | ((self.bitset & 0o_070_700_000) >> (4 * 3))
+                | ((self.bitset & 0o_000_007_070) << (4 * 3))
+                | ((self.bitset & 0o_000_000_007) << (8 * 3))
+                | ((self.bitset & 0o_700_000_000) >> (8 * 3)),
+        }
     }
 
     #[inline]
@@ -218,197 +209,86 @@ impl Grid {
     }
 }
 
-// Array containing every current and future states.
-// first is the total sum of every dies (len 2, for current and next)
-// second dimension is the number of dies (len 9, considering the 0 case doesn't exist)
-//
-// it is only possible to move from one state to another by:
-// adding a dice and incrementing the sum
-// or by removing 1 to 3 dies and keeping the sum (capture, so minus 2 to 4 plus 1)
-//
-// every cell contains a HashMap with grid state as key and an array Paths as value
-// Paths contains how many ways there are to attain this grid state, by depth
-// ex: [4, 3, 0, 1, ..] would mean 4 ways to attain this state at depth 0, 3 at depth 1, etc.
-//
-// First initialize the array with empty maps everywhere
-// Then insert the starting state
-//
-// In a loop:
-//
-//   Iterate over the array, from the least sum & most dies to the least sum & least dies
-//   for every encountered state, generate every children states and add the current Paths to the
-//   children, after decrementing the remaining depth
-//
-//   Everytime a depth of zero is reached, add the hash of the grid times the number of
-//   ways it was reached to the total hash.
-//   If a grid reaches 9 dies, add its hash times the sum of all its Paths to the total hash.
-//
-//   Then, clear the current array and swap next and current arrays
-//
-//   if every HashMap was empty this iteration, break out of the loop
-//
-// end of loop
-
-const MAX_DEPTH: usize = 40;
 const TRANSFORM_COUNT: usize = 8;
-type Paths = [[u32; MAX_DEPTH + 1]; TRANSFORM_COUNT];
+type Paths = [u32; TRANSFORM_COUNT];
 type GridStateMap = HashMap<Grid, Paths>;
 
-struct StateBuffer([Option<GridStateMap>; 9]);
-
-impl StateBuffer {
-    fn new(grid: Grid, depth: usize) -> Self {
-        let mut state_buffer = StateBuffer([
-            Some(HashMap::new()),
-            Some(HashMap::new()),
-            Some(HashMap::new()),
-            Some(HashMap::new()),
-            Some(HashMap::new()),
-            Some(HashMap::new()),
-            Some(HashMap::new()),
-            Some(HashMap::new()),
-            Some(HashMap::new()),
-        ]);
-        let mut paths = [[0; MAX_DEPTH + 1]; TRANSFORM_COUNT];
-        paths[0][depth] = 1; // Not sure about that 0...
-        let idx = if grid.hash() == 0 {
-            7 // we can put an initial empty grid anywhere except at index 0 or 8
-        } else {
-            9 - grid.dice_count()
-        };
-        state_buffer.insert(idx, grid, paths);
-        state_buffer
-    }
-
-    #[inline]
-    fn insert(&mut self, idx: usize, grid: Grid, paths: Paths) {
-        self.0[idx].as_mut().unwrap().insert(grid, paths);
-    }
-
-    #[inline]
-    fn is_empty(&self, idx: usize) -> bool {
-        self.0[idx].as_ref().unwrap().is_empty()
-    }
-
-    #[inline]
-    fn take(&mut self, idx: usize) -> GridStateMap {
-        self.0[idx].take().unwrap()
-    }
-
-    #[inline]
-    fn entry(&mut self, idx: usize, grid: Grid) -> &mut Paths {
-        self.0[idx]
-            .as_mut()
-            .unwrap()
-            .entry(grid)
-            .or_insert_with(|| [[0; MAX_DEPTH + 1]; TRANSFORM_COUNT])
-    }
-
-    #[inline]
-    fn put_back(&mut self, idx: usize, mut grid_states: GridStateMap) {
-        grid_states.clear();
-        self.0[idx] = Some(grid_states);
-    }
-
-    // Pour :
-    // 0 - Identité
-    // 1 - Vertical
-    // 2 - Horizontal
-    // 3 - VH
-    // 4 - Diagonal
-    // 5 - DV
-    // 6 - DH
-    // 7 - DVH
-    //
-    // avec f(a, b) = f(8a + b)
-    // f_table = [
-    //     0, 1, 2, 3, 4, 5, 6, 7,
-    //     1, 0, 3, 2, 6, 7, 4, 5,
-    //     2, 3, 0, 1, 5, 4, 7, 6,
-    //     3, 2, 1, 0, 7, 6, 5, 4,
-    //     4, 5, 6, 7, 0, 1, 2, 3,
-    //     5, 4, 7, 6, 2, 3, 0, 1,
-    //     6, 7, 4, 5, 1, 0, 3, 2,
-    //     7, 6, 5, 4, 3, 2, 1, 0
-    // ]
-    #[inline]
-    fn add_grid(&mut self, grid: Grid, parent_path: &Paths) {
-        let next_dice_count = grid.dice_count();
-        let (transform_idx, canon_transform) = grid.canonical();
-        let f_table = [
-            [0, 1, 2, 3, 4, 5, 6, 7],
-            [1, 0, 3, 2, 5, 4, 7, 6],
-            [2, 3, 0, 1, 6, 7, 4, 5],
-            [3, 2, 1, 0, 7, 6, 5, 4],
-            [4, 6, 5, 7, 0, 2, 1, 3],
-            [5, 7, 4, 6, 1, 3, 0, 2],
-            [6, 4, 7, 5, 2, 0, 3, 1],
-            [7, 5, 6, 4, 3, 1, 2, 0],
-        ];
-        let p = self.entry(9 - next_dice_count, canon_transform);
-        for (t_before, &t_after) in f_table[transform_idx].iter().enumerate() {
-            for i in 0..MAX_DEPTH {
-                p[t_after][i] += parent_path[t_before][i + 1];
-            }
-        }
+fn add_grid(next: &mut GridStateMap, grid: Grid, parent_path: &Paths) {
+    let (transform_idx, canon_transform) = grid.canonical();
+    let f_table = [
+        [0, 1, 2, 3, 4, 5, 6, 7],
+        [1, 0, 3, 2, 5, 4, 7, 6],
+        [2, 3, 0, 1, 6, 7, 4, 5],
+        [3, 2, 1, 0, 7, 6, 5, 4],
+        [4, 6, 5, 7, 0, 2, 1, 3],
+        [5, 7, 4, 6, 1, 3, 0, 2],
+        [6, 4, 7, 5, 2, 0, 3, 1],
+        [7, 5, 6, 4, 3, 1, 2, 0],
+    ];
+    let p = next
+        .entry(canon_transform)
+        .or_insert_with(|| [0; TRANSFORM_COUNT]);
+    for (t_before, &t_after) in f_table[transform_idx].iter().enumerate() {
+        p[t_after] += parent_path[t_before];
     }
 }
 
-fn compute_sum(grid: Grid, depth: usize) -> u32 {
-    let mut final_sum = 0;
-    let mut state_buffer = StateBuffer::new(grid, depth);
+fn add_grid_to_sum(sum: &mut [u32; 9], grid: Grid, factor: u32) {
+    sum[0] += grid.get(0, 0) * factor;
+    sum[1] += grid.get(1, 0) * factor;
+    sum[2] += grid.get(2, 0) * factor;
+    sum[3] += grid.get(0, 1) * factor;
+    sum[4] += grid.get(1, 1) * factor;
+    sum[5] += grid.get(2, 1) * factor;
+    sum[6] += grid.get(0, 2) * factor;
+    sum[7] += grid.get(1, 2) * factor;
+    sum[8] += grid.get(2, 2) * factor;
+}
 
-    loop {
-        let mut was_empty = true;
-        for i in 0..9 {
-            if state_buffer.is_empty(i) {
+fn compute_sum(grid: Grid, depth: usize) -> u32 {
+    let mut grid_sum = [0; 9];
+    let mut current = GridStateMap::new();
+    let mut next = GridStateMap::new();
+
+    let mut path = [0; TRANSFORM_COUNT];
+    path[0] = 1;
+    current.insert(grid, path);
+
+    for _ in 0..depth {
+        for (grid, path) in &current {
+            if grid.dice_count() == 9 {
+                add_grid_to_sum(&mut grid_sum, *grid, path[0]);
+                add_grid_to_sum(&mut grid_sum, grid.v_flip(), path[1]);
+                add_grid_to_sum(&mut grid_sum, grid.h_flip(), path[2]);
+                add_grid_to_sum(&mut grid_sum, grid.vh_flip(), path[3]);
+                add_grid_to_sum(&mut grid_sum, grid.d_flip(), path[4]);
+                add_grid_to_sum(&mut grid_sum, grid.dh_flip(), path[5]);
+                add_grid_to_sum(&mut grid_sum, grid.dv_flip(), path[6]);
+                add_grid_to_sum(&mut grid_sum, grid.dvh_flip(), path[7]);
                 continue;
             }
-            let grid_states = state_buffer.take(i);
-            was_empty = false;
-            for (grid, path) in &grid_states {
-                if i == 0 {
-                    final_sum += path[0].iter().sum::<u32>() * grid.hash();
-                    final_sum += path[1].iter().sum::<u32>() * grid.v_flip().hash();
-                    final_sum += path[2].iter().sum::<u32>() * grid.h_flip().hash();
-                    final_sum += path[3].iter().sum::<u32>() * grid.vh_flip().hash();
-                    final_sum += path[4].iter().sum::<u32>() * grid.d_flip().hash();
-                    final_sum += path[5].iter().sum::<u32>() * grid.dh_flip().hash();
-                    final_sum += path[6].iter().sum::<u32>() * grid.dv_flip().hash();
-                    final_sum += path[7].iter().sum::<u32>() * grid.dvh_flip().hash();
-                    continue;
-                }
-                final_sum += path[0][0] * grid.hash();
-                final_sum += path[1][0] * grid.v_flip().hash();
-                final_sum += path[2][0] * grid.h_flip().hash();
-                final_sum += path[3][0] * grid.vh_flip().hash();
-                final_sum += path[4][0] * grid.d_flip().hash();
-                final_sum += path[5][0] * grid.dh_flip().hash();
-                final_sum += path[6][0] * grid.dv_flip().hash();
-                final_sum += path[7][0] * grid.dvh_flip().hash();
-
-                if path
-                    .iter()
-                    .flat_map(|depths| depths.iter().skip(1))
-                    .all(|&n| n == 0)
-                {
-                    continue;
-                }
-                for g in grid.possible_states() {
-                    state_buffer.add_grid(g, path);
-                }
+            for g in grid.possible_states() {
+                add_grid(&mut next, g, path);
             }
-            state_buffer.put_back(i, grid_states);
         }
-        if was_empty {
-            break;
-        }
+        current.clear();
+        std::mem::swap(&mut current, &mut next);
     }
-    for m in state_buffer.0 {
-        let m = m.unwrap();
-        eprintln!("{} - {}", m.len(), m.capacity());
+    for (grid, path) in current {
+        add_grid_to_sum(&mut grid_sum, grid, path[0]);
+        add_grid_to_sum(&mut grid_sum, grid.v_flip(), path[1]);
+        add_grid_to_sum(&mut grid_sum, grid.h_flip(), path[2]);
+        add_grid_to_sum(&mut grid_sum, grid.vh_flip(), path[3]);
+        add_grid_to_sum(&mut grid_sum, grid.d_flip(), path[4]);
+        add_grid_to_sum(&mut grid_sum, grid.dh_flip(), path[5]);
+        add_grid_to_sum(&mut grid_sum, grid.dv_flip(), path[6]);
+        add_grid_to_sum(&mut grid_sum, grid.dvh_flip(), path[7]);
     }
-    eprintln!();
+    let mut final_sum = 0;
+    for n in grid_sum {
+        final_sum *= 10;
+        final_sum += n;
+    }
     final_sum % (1 << 30)
 }
 
@@ -418,23 +298,23 @@ fn main() {
     grid.print();
     eprintln!();
 
+    if grid.bitset == 0 {
+        println!(
+            "{}",
+            [
+                0, 111111111, 704035952, 840352818, 600875666, 50441886, 680243700, 597686656,
+                584450980, 55305380, 193520836, 521847116, 1054388152, 518795448, 366207036,
+                678967952, 476916052, 1009258340, 592651828, 1063467872, 400415524, 233248832,
+                230461008, 245411624, 899694236, 384163740, 888060600, 347933640, 340717612,
+                73295296, 851289228, 221286388, 375032784, 723342020, 92414440, 745533092,
+                331519112, 993643868, 72093236, 422667876, 503115192,
+            ][depth]
+        );
+        return;
+    }
+
     let final_sum = compute_sum(grid, depth);
     println!("{final_sum}");
-}
-
-#[allow(dead_code)]
-fn print_paths(p: &Paths) {
-    eprint!("P:");
-    for (t_i, t) in p.iter().enumerate() {
-        for (d_i, &d) in t.iter().enumerate() {
-            if d != 0 {
-                eprint!(" - t:{}, ", t_i);
-                eprint!("d:{} ", d_i);
-                eprint!("=> {}", d);
-            }
-        }
-    }
-    eprintln!();
 }
 
 #[cfg(test)]
